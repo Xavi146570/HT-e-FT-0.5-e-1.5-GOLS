@@ -1,13 +1,21 @@
 import httpx
 from typing import List, Dict
-from .config import API_FOOTBALL_KEY, API_FOOTBALL_BASE_URL, LIGA_PORTUGAL_ID, HISTORIC_SEASONS
+from app.config import (
+    API_FOOTBALL_KEY,
+    API_FOOTBALL_BASE_URL,
+    LIGA_PORTUGAL_ID,
+    HISTORIC_SEASONS,
+)
 
 HEADERS = {
     "x-apisports-key": API_FOOTBALL_KEY,
 }
 
+
 async def get_team_id_by_name(team_name: str) -> int:
-    async with httpx.AsyncClient(base_url=API_FOOTBALL_BASE_URL, headers=HEADERS, timeout=20) as client:
+    async with httpx.AsyncClient(
+        base_url=API_FOOTBALL_BASE_URL, headers=HEADERS, timeout=20
+    ) as client:
         r = await client.get("/teams", params={"search": team_name})
         r.raise_for_status()
         data = r.json()
@@ -16,9 +24,12 @@ async def get_team_id_by_name(team_name: str) -> int:
                 return item["team"]["id"]
     raise ValueError(f"Team not found: {team_name}")
 
+
 async def get_league_fixtures_for_team(team_id: int) -> List[Dict]:
     fixtures: List[Dict] = []
-    async with httpx.AsyncClient(base_url=API_FOOTBALL_BASE_URL, headers=HEADERS, timeout=20) as client:
+    async with httpx.AsyncClient(
+        base_url=API_FOOTBALL_BASE_URL, headers=HEADERS, timeout=20
+    ) as client:
         for season in HISTORIC_SEASONS:
             page = 1
             while True:
@@ -41,9 +52,10 @@ async def get_league_fixtures_for_team(team_id: int) -> List[Dict]:
                 page += 1
     return fixtures
 
+
 def compute_over_stats_from_fixtures(fixtures: List[Dict]) -> Dict[str, float]:
     """
-    A partir da lista de fixtures, calcula:
+    A partir da lista de fixtures históricos, calcula:
     - over_05_ht_s, over_05_ht_n
     - over_15_ft_s, over_15_ft_n
     """
@@ -53,7 +65,6 @@ def compute_over_stats_from_fixtures(fixtures: List[Dict]) -> Dict[str, float]:
     over_15_ft_n = 0
 
     for fx in fixtures:
-        # garantir que está concluído
         if fx.get("fixture", {}).get("status", {}).get("short") != "FT":
             continue
 
@@ -71,7 +82,7 @@ def compute_over_stats_from_fixtures(fixtures: List[Dict]) -> Dict[str, float]:
             if total_ht >= 1:
                 over_05_ht_s += 1
 
-        # Full-time (usamos goals home/away finais)
+        # Full-time
         ft_home = goals.get("home")
         ft_away = goals.get("away")
         if ft_home is not None and ft_away is not None:
@@ -87,16 +98,21 @@ def compute_over_stats_from_fixtures(fixtures: List[Dict]) -> Dict[str, float]:
         "over_15_ft_n": over_15_ft_n,
     }
 
+
 async def get_odds_for_fixture(home_id: int, away_id: int, season: int) -> Dict:
     """
-    Busca odds para o próximo jogo (ou último) entre home/away.
-    Simplificação: pega o primeiro fixture que encontrar com status != "NS" (ou o mais recente).
-    Em produção você vai querer algo mais robusto (por data).
+    Busca odds para um fixture histórico (head-to-head) – mantém para uso pré-live.
     """
-    async with httpx.AsyncClient(base_url=API_FOOTBALL_BASE_URL, headers=HEADERS, timeout=20) as client:
+    async with httpx.AsyncClient(
+        base_url=API_FOOTBALL_BASE_URL, headers=HEADERS, timeout=20
+    ) as client:
         r = await client.get(
             "/fixtures/headtohead",
-            params={"h2h": f"{home_id}-{away_id}", "league": LIGA_PORTUGAL_ID, "season": season},
+            params={
+                "h2h": f"{home_id}-{away_id}",
+                "league": LIGA_PORTUGAL_ID,
+                "season": season,
+            },
         )
         r.raise_for_status()
         data = r.json()
@@ -104,11 +120,46 @@ async def get_odds_for_fixture(home_id: int, away_id: int, season: int) -> Dict:
         if not fixtures:
             return {}
 
-        # vamos pegar o último fixture e buscar odds dele
         fixture = fixtures[-1]
         fixture_id = fixture["fixture"]["id"]
 
-        r2 = await client.get("/odds", params={"fixture": fixture_id, "bookmaker": 8})  # Ex.: bookmaker 8 (Bet365) – adaptar
+        r2 = await client.get("/odds", params={"fixture": fixture_id, "bookmaker": 8})
         r2.raise_for_status()
         odds_data = r2.json()
         return odds_data
+
+
+# =========================
+#   LIVE FIXTURES (AO VIVO)
+# =========================
+
+async def get_live_fixtures_liga_portugal() -> List[Dict]:
+    """
+    Vai buscar todos os jogos AO VIVO da Liga Portugal.
+    Usa o endpoint /fixtures?live=all e filtra pela liga.
+    """
+    async with httpx.AsyncClient(
+        base_url=API_FOOTBALL_BASE_URL, headers=HEADERS, timeout=20
+    ) as client:
+        r = await client.get("/fixtures", params={"live": "all"})
+        r.raise_for_status()
+        data = r.json()
+        all_live = data.get("response", [])
+
+        liga_live = [
+            fx for fx in all_live
+            if fx.get("league", {}).get("id") == LIGA_PORTUGAL_ID
+        ]
+        return liga_live
+
+
+async def get_odds_for_live_fixture(fixture_id: int) -> Dict:
+    """
+    Busca odds do fixture AO VIVO (live) pela API de odds.
+    """
+    async with httpx.AsyncClient(
+        base_url=API_FOOTBALL_BASE_URL, headers=HEADERS, timeout=20
+    ) as client:
+        r = await client.get("/odds", params={"fixture": fixture_id, "bookmaker": 8})
+        r.raise_for_status()
+        return r.json()
