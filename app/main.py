@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import List
 from app.data_fetcher import (
@@ -11,9 +11,9 @@ from app.data_fetcher import (
 )
 from app.model import compute_game_probs
 from app.telegram_notifier import send_telegram_message, format_alert_message
-from app.config import MIN_EDGE_ALERT
+from app.config import MIN_EDGE_ALERT, LIVE_SCAN_KEY
 
-app = FastAPI(title="Liga Portugal Live Scanner", version="2.0.0")
+app = FastAPI(title="Liga Portugal Live Scanner Protegido", version="2.1.0")
 
 class PredictionRequest(BaseModel):
     home_team: str
@@ -44,13 +44,17 @@ def extract_odds_from_response(odds_data: dict) -> dict:
 
 @app.get("/")
 def root():
-    return {"status": "ok", "message": "Scanner Live Liga Portugal Ativo"}
+    return {"status": "ok", "message": "Scanner Protegido Ativo"}
 
 @app.get("/live-scan")
-async def live_scan():
+async def live_scan(key: str = Query(None)):
     """
-    Endpoint para varrer jogos AO VIVO e enviar alertas automáticos.
+    Endpoint protegido para varrer jogos AO VIVO.
+    Exige ?key=SUA_CHAVE no URL.
     """
+    if key != LIVE_SCAN_KEY:
+        raise HTTPException(status_code=403, detail="Acesso negado: Chave de segurança inválida.")
+
     live_fixtures = await get_live_fixtures_liga_portugal()
     if not live_fixtures:
         return {"message": "Nenhum jogo da Liga Portugal a decorrer agora."}
@@ -65,7 +69,7 @@ async def live_scan():
         goals_away = fx["goals"]["away"]
         total_goals = goals_home + goals_away
 
-        # 1. Buscar histórico para calcular P-Min
+        # Buscar histórico e calcular P-Min
         h_id = fx["teams"]["home"]["id"]
         a_id = fx["teams"]["away"]["id"]
         h_fix = await get_league_fixtures_for_team(h_id)
@@ -75,12 +79,11 @@ async def live_scan():
         stats_a = compute_over_stats_from_fixtures(a_fix)
         probs = compute_game_probs(stats_h, stats_a)
 
-        # 2. Buscar Odds Live
+        # Buscar Odds Live
         odds_raw = await get_odds_for_live_fixture(f_id)
         live_odds = extract_odds_from_response(odds_raw)
 
-        # 3. Lógica de Alerta Live
-        # Exemplo: Se o jogo está 0-0 e estamos entre os 15' e 35' minutos
+        # Lógica Over 0.5 HT (0-0 entre 15' e 35')
         if total_goals == 0 and 15 <= elapsed <= 35:
             market = "over05_ht"
             odd = live_odds.get(market)
@@ -91,9 +94,9 @@ async def live_scan():
                     msg = format_alert_message(home_name, away_name, "LIVE Over 0.5 HT", probs[market]["p_min"], p_mkt, edge, odd)
                     msg += f"\n⏱ Tempo: {elapsed}' | Placar: 0-0"
                     await send_telegram_message(msg)
-                    results.append(f"Alerta enviado: {home_name} vs {away_name}")
+                    results.append(f"Alerta HT: {home_name}")
 
-        # Exemplo: Over 1.5 FT se o jogo ainda tem 0 ou 1 golo até aos 60'
+        # Lógica Over 1.5 FT (Até 1 golo até aos 65')
         if total_goals <= 1 and elapsed <= 65:
             market = "over15_ft"
             odd = live_odds.get(market)
@@ -104,13 +107,13 @@ async def live_scan():
                     msg = format_alert_message(home_name, away_name, "LIVE Over 1.5 FT", probs[market]["p_min"], p_mkt, edge, odd)
                     msg += f"\n⏱ Tempo: {elapsed}' | Placar: {goals_home}-{goals_away}"
                     await send_telegram_message(msg)
-                    results.append(f"Alerta enviado FT: {home_name} vs {away_name}")
+                    results.append(f"Alerta FT: {home_name}")
 
-    return {"processed_fixtures": len(live_fixtures), "alerts": results}
+    return {"processed": len(live_fixtures), "alerts": results}
 
 @app.post("/predict")
 async def predict(req: PredictionRequest):
-    # Mantém o endpoint predict original para consultas manuais
+    # Mantém o predict manual para testes
     try:
         home_id = await get_team_id_by_name(req.home_team)
         away_id = await get_team_id_by_name(req.away_team)
@@ -123,17 +126,4 @@ async def predict(req: PredictionRequest):
     away_stats = compute_over_stats_from_fixtures(away_fixtures)
     probs = compute_game_probs(home_stats, away_stats)
 
-    odds_raw = {}
-    real_odds = {"over05_ht": None, "over15_ft": None}
-    if req.season_for_odds:
-        try:
-            odds_raw = await get_odds_for_fixture(home_id, away_id, req.season_for_odds)
-            real_odds = extract_odds_from_response(odds_raw)
-        except Exception: pass
-
-    return {
-        "home_team": req.home_team,
-        "away_team": req.away_team,
-        "probabilities": probs,
-        "odds_found": real_odds
-    }
+    return {"home": req.home_team, "away": req.away_team, "probabilities": probs}
