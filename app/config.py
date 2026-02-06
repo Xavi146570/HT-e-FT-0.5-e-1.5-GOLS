@@ -15,5 +15,6 @@ HISTORIC_SEASONS = [2020, 2021, 2022, 2023, 2024]
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# Limiar de edge para enviar alerta (ex: só avisar se edge >= 5%)
+# Segurança e Filtros
 MIN_EDGE_ALERT = float(os.getenv("MIN_EDGE_ALERT", "0.05"))
+LIVE_SCAN_KEY = os.getenv("LIVE_SCAN_KEY", "mudar_esta_senha_no_render")
