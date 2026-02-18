@@ -18,3 +18,6 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # Segurança e Filtros
 MIN_EDGE_ALERT = float(os.getenv("MIN_EDGE_ALERT", "0.05"))
 LIVE_SCAN_KEY = os.getenv("LIVE_SCAN_KEY", "mudar_esta_senha_no_render")
+
+# Render (ADICIONAR ESTA LINHA - ESSENCIAL PARA O KEEP-ALIVE)
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "")
